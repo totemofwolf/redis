@@ -62,7 +62,6 @@ typedef long long mstime_t; /* millisecond time type. */
 #include "util.h"    /* Misc functions useful in many places */
 #include "latency.h" /* Latency monitor API */
 #include "sparkline.h" /* ASII graphs API */
-#include "ctrip.h"
 
 /* Error codes */
 #define REDIS_OK                0
@@ -1194,6 +1193,7 @@ long long replicationGetSlaveOffset(void);
 char *replicationGetSlaveName(redisClient *c);
 long long getPsyncInitialOffset(void);
 int replicationSetupSlaveForFullResync(redisClient *slave, long long offset);
+void createReplicationBacklog(void);
 
 /* Generic persistence functions */
 void startLoading(FILE *fp);
@@ -1576,6 +1576,8 @@ void enableWatchdog(int period);
 void disableWatchdog(void);
 void watchdogScheduleSignal(int period);
 void redisLogHexDump(int level, char *descr, void *value, size_t len);
+
+#include "ctrip.h"
 
 #define redisDebug(fmt, ...) \
     printf("DEBUG %s:%d > " fmt "\n", __FILE__, __LINE__, __VA_ARGS__)

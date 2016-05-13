@@ -10,6 +10,8 @@
 
 #define REDIS_FAKESLAVE (1<<31)
 
+void doFakeSync(redisClient *c);
+
 #endif /* CTRIP_H_ */
 
 
