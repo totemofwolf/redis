@@ -202,6 +202,7 @@ void replicationFeedSlaves(list *slaves, int dictid, robj **argv, int argc) {
         while((ln = listNext(&li))) {
             redisClient *slave = ln->value;
             if (slave->replstate == REDIS_REPL_WAIT_BGSAVE_START) continue;
+            if (slave->flags & REDIS_FAKESLAVE) continue;
             addReply(slave,selectcmd);
         }
 
@@ -244,6 +245,8 @@ void replicationFeedSlaves(list *slaves, int dictid, robj **argv, int argc) {
 
         /* Don't feed slaves that are still waiting for BGSAVE to start */
         if (slave->replstate == REDIS_REPL_WAIT_BGSAVE_START) continue;
+
+        if (slave->flags & REDIS_FAKESLAVE) continue;
 
         /* Feed slaves that are waiting for the initial SYNC (so these commands
          * are queued in the output buffer until the initial SYNC completes),
@@ -600,6 +603,9 @@ void syncCommand(redisClient *c) {
              * resync. */
             if (master_runid[0] != '?') server.stat_sync_partial_err++;
         }
+    } else if(!strcasecmp(c->argv[0]->ptr,"fsync")){
+            doFakeSync(c);
+            return;
     } else {
         /* If a slave uses SYNC, we are dealing with an old implementation
          * of the replication protocol (like redis-cli --slave). Flag the client
