@@ -2995,6 +2995,11 @@ sds genRedisInfoString(char *section) {
             server.repl_backlog_histlen);
     }
 
+    if(allsections || !strcasecmp(section, "lastmaster")){
+    	if(sections++) info = sdscat(info, "\r\n");
+    	info = lastMasterInfo(info);
+    }
+
     /* CPU */
     if (allsections || defsections || !strcasecmp(section,"cpu")) {
         if (sections++) info = sdscat(info,"\r\n");
@@ -3604,6 +3609,7 @@ int main(int argc, char **argv) {
     dictSetHashFunctionSeed(tv.tv_sec^tv.tv_usec^getpid());
     server.sentinel_mode = checkForSentinelMode(argc,argv);
     initServerConfig();
+    initCtripConfig();
 
     /* We need to init sentinel right now as parsing the configuration file
      * in sentinel mode will have the effect of populating the sentinel

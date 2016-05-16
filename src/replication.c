@@ -1729,6 +1729,7 @@ void slaveofCommand(redisClient *c) {
     if (!strcasecmp(c->argv[1]->ptr,"no") &&
         !strcasecmp(c->argv[2]->ptr,"one")) {
         if (server.masterhost) {
+        	saveLastMaster();
             replicationUnsetMaster();
             sds client = catClientInfoString(sdsempty(),c);
             redisLog(REDIS_NOTICE,
@@ -1748,6 +1749,13 @@ void slaveofCommand(redisClient *c) {
             addReplySds(c,sdsnew("+OK Already connected to specified master\r\n"));
             return;
         }
+
+        if(server.masterhost){
+        	saveLastMaster();
+        }else{
+        	clearLastMaster();
+        }
+
         /* There was no previous master or the user specified a different one,
          * we can continue. */
         replicationSetMaster(c->argv[1]->ptr, port);

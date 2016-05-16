@@ -7,6 +7,42 @@
 
 #include "redis.h"
 
+lastMaster lmaster;
+
+
+void clearLastMaster(){
+
+	lmaster.master_runid[REDIS_RUN_ID_SIZE] = '\0';
+	lmaster.master_reploff = -1;
+	lmaster.currentReploff = -1;
+}
+
+void initCtripConfig(){
+
+	clearLastMaster();
+}
+
+void saveLastMaster(){
+
+	memcpy(lmaster.master_runid, server.repl_master_runid, REDIS_RUN_ID_SIZE);
+	lmaster.master_reploff = server.master->reploff;
+	if(server.repl_backlog != NULL){
+		lmaster.currentReploff = server.master_repl_offset;
+	}
+
+}
+
+sds lastMasterInfo(sds info){
+
+	if(lmaster.master_reploff == -1){
+		info = sdscatprintf(info, "%s %d %d\r\n", "none", lmaster.master_reploff, lmaster.currentReploff);
+	}else{
+		info = sdscatprintf(info, "%s %d %d\r\n", lmaster.master_runid, lmaster.master_reploff, lmaster.currentReploff);
+	}
+
+	return info;
+}
+
 /**
  * fake slave, just generate replication log
  */
