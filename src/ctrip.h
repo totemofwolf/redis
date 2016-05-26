@@ -10,6 +10,18 @@
 
 #define REDIS_FAKESLAVE (1<<31)
 
+#define CONFIG_NAME_META_SERVER_URL "meta-server-url"
+#define CONFIG_NAME_CLUSTER_NAME	"cluster-name"
+#define CONFIG_NAME_SHARD_NAME		"shard-name"
+
+
+typedef struct ctrip{
+
+	char* clusterName;
+	char* shardName;
+	char* metaServerUrl;
+}ctripServer;
+
 typedef struct lastMaster{
 
 	char master_runid[REDIS_RUN_ID_SIZE + 1];
@@ -27,6 +39,9 @@ void initCtripConfig();
 void saveLastMaster();
 void clearLastMaster();
 sds lastMasterInfo(sds info);
+int loadCtripConfig(sds *argv, int argc);
+void checkServerConfig();
+void config_get_ctrip_field(char *pattern, redisClient *c, int *pmatches);
 
 #endif /* CTRIP_H_ */
 

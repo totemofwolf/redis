@@ -3674,6 +3674,7 @@ int main(int argc, char **argv) {
     } else {
         redisLog(REDIS_WARNING, "Warning: no config file specified, using the default config. In order to specify a config file use %s /path/to/%s.conf", argv[0], server.sentinel_mode ? "sentinel" : "redis");
     }
+    checkServerConfig();
     if (server.daemonize) daemonize();
     initServer();
     if (server.daemonize) createPidFile();

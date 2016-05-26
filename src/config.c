@@ -541,7 +541,9 @@ void loadServerConfigFromString(char *config) {
                 if (err) goto loaderr;
             }
         } else {
-            err = "Bad directive or wrong number of arguments"; goto loaderr;
+        	if(!loadCtripConfig(argv, argc)){
+        		err = "Bad directive or wrong number of arguments"; goto loaderr;
+        	}
         }
         sdsfreesplitres(argv,argc);
     }
@@ -1017,6 +1019,9 @@ void configGetCommand(redisClient *c) {
     char buf[128];
     int matches = 0;
     redisAssertWithInfo(c,o,sdsEncodedObject(o));
+
+    /* ctrip values */
+    config_get_ctrip_field(pattern, c, &matches);
 
     /* String values */
     config_get_string_field("dbfilename",server.rdb_filename);
