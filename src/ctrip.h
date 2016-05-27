@@ -14,12 +14,39 @@
 #define CONFIG_NAME_CLUSTER_NAME	"cluster-name"
 #define CONFIG_NAME_SHARD_NAME		"shard-name"
 
+#define CLUSTER_NAME_DEFAULT	"default"
+
+#define META_SERVER_CONNECTION_COUNT   		2
+#define URL_FORMAT_GET_KEEPER_MASTER		"/vpi/v1/%s/%s/keeper/master"
+#define URL_FORMAT_GET_REDIS_MASTER			"/vpi/v1/%s/%s/redis/master"
+
+#define META_SERVER_STATE_NONE   		0
+#define META_SERVER_STATE_CONNECTING   	1
+#define META_SERVER_STATE_CONNECTED 	2
+
+
+
+typedef struct metaConnection{
+
+	char *urlFormat;
+
+	int  metaServerState;
+	int  metaServerFd;
+
+	aeFileProc *processor;
+}metaConnection;
 
 typedef struct ctrip{
 
 	char* clusterName;
 	char* shardName;
 	char* metaServerUrl;
+
+	//generated from metaServerUrl
+	sds   metaServerHost;
+	int   metaServerPort;
+
+	metaConnection connection[META_SERVER_CONNECTION_COUNT];
 }ctripServer;
 
 typedef struct lastMaster{
@@ -42,6 +69,9 @@ sds lastMasterInfo(sds info);
 int loadCtripConfig(sds *argv, int argc);
 void checkServerConfig();
 void config_get_ctrip_field(char *pattern, redisClient *c, int *pmatches);
+void processRedisMasterResponse(struct aeEventLoop *eventLoop, int fd, void *clientData, int mask);
+void processKeeperMasterResponse(struct aeEventLoop *eventLoop, int fd, void *clientData, int mask);
+void getCtripMetaInfo();
 
 #endif /* CTRIP_H_ */
 

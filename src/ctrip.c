@@ -11,6 +11,8 @@ ctripServer ctrip;
 lastMaster lmaster;
 
 
+void sendGetRequest(metaConnection *connection);
+
 void clearLastMaster(){
 
 	lmaster.master_runid[REDIS_RUN_ID_SIZE] = '\0';
@@ -23,6 +25,20 @@ void initCtripConfig(){
 	ctrip.clusterName = "default";
 	ctrip.metaServerUrl = NULL;
 	ctrip.shardName = NULL;
+
+
+	ctrip.connection[0].metaServerState = META_SERVER_STATE_NONE;
+	ctrip.connection[0].metaServerFd = -1;
+	ctrip.connection[0].urlFormat = URL_FORMAT_GET_KEEPER_MASTER;
+	ctrip.connection[0].processor = processKeeperMasterResponse;
+
+
+	ctrip.connection[1].metaServerState = META_SERVER_STATE_NONE;
+	ctrip.connection[1].metaServerFd = -1;
+	ctrip.connection[1].urlFormat = URL_FORMAT_GET_REDIS_MASTER;
+	ctrip.connection[1].processor = processRedisMasterResponse;
+
+
 	clearLastMaster();
 }
 
@@ -75,10 +91,76 @@ void doFakeSync(redisClient *c){
     refreshGoodSlavesCount();
 }
 
+int getLenUntilPath(sds hostPortPath){
+
+	int i, len = sdslen(hostPortPath);
+
+	for(i =0; i < len; i++){
+		if(hostPortPath[i] == '/'){
+			break;
+		}
+	}
+
+	return i;
+
+}
+
+void getMetaServerHostPort(){
+
+	int argc;
+	char *err;
+
+	sds *argv = sdssplitlen(ctrip.metaServerUrl, strlen(ctrip.metaServerUrl), "://", 3, &argc);
+
+	if(argc != 2){
+		err = "can not parse meta-server-url, split by ://";
+		goto err;
+	}
+
+	if(strcasecmp(argv[0], "http")){
+
+		err = "unsupported https protocol, only support http";
+		goto err;
+	}
+
+
+	int hostPortLen;
+	sds *hostPort = sdssplitlen(argv[1], getLenUntilPath(argv[1]), ":", 1, &hostPortLen);
+
+	if(hostPortLen != 1 && hostPortLen != 2){
+		err = "host port split by : length not right";
+		goto err;
+	}
+
+	ctrip.metaServerHost = sdsdup(hostPort[0]);
+	if(hostPortLen == 1){
+		ctrip.metaServerPort = 80;
+	}else{
+		ctrip.metaServerPort = atoi(hostPort[1]);
+		if(ctrip.metaServerPort <= 0){
+			err = "metaServerPort < 0";
+			goto err;
+		}
+	}
+
+    redisLog(REDIS_NOTICE, "metaServer:(%s:%d)", ctrip.metaServerHost, ctrip.metaServerPort);
+
+	sdsfreesplitres(hostPort, hostPortLen);
+	sdsfreesplitres(argv, argc);
+	return;
+
+err:
+	fprintf(stderr, "\n*** FATAL CONFIG FILE ERROR ***\n");
+	fprintf(stderr, "%s %s\n", err, ctrip.metaServerUrl);
+	exit(1);
+}
+
+
 int loadCtripConfig(sds *argv, int argc){
 
 	if(!strcasecmp(argv[0], CONFIG_NAME_META_SERVER_URL) && argc == 2){
 		ctrip.metaServerUrl = zstrdup(argv[1]);
+		getMetaServerHostPort();
 		return 1;
 	}
 	if(!strcasecmp(argv[0], CONFIG_NAME_CLUSTER_NAME) && argc == 2){
@@ -128,6 +210,88 @@ void config_get_ctrip_field(char *pattern, redisClient *c, int *pmatches){
 	config_get_string_field(CONFIG_NAME_SHARD_NAME, ctrip.shardName);
 }
 
+void metaServerConnect(struct aeEventLoop *eventLoop, int fd, void *clientData, int mask){
 
-//simple http support
+	int sockerr = 0, errlen = sizeof(sockerr);
+	metaConnection *connection = clientData;
+
+    /* Check for errors in the socket. */
+	int sockopt = getsockopt(fd, SOL_SOCKET, SO_ERROR, &sockerr, &errlen);
+    if ( sockopt == -1){
+        sockerr = errno;
+    }
+    if (sockerr) {
+        redisLog(REDIS_WARNING,"Error connection on socket for metaserver: %s",
+            strerror(sockerr));
+        aeDeleteFileEvent(server.el,fd,AE_READABLE|AE_WRITABLE);
+        close(fd);
+        connection->metaServerFd = -1;
+        connection->metaServerState = META_SERVER_STATE_NONE;
+        return;
+    }
+
+    aeDeleteFileEvent(server.el,fd,AE_READABLE|AE_WRITABLE);
+    connection->metaServerState = META_SERVER_STATE_CONNECTED;
+    redisLog(REDIS_NOTICE, "Connect to server successed(%s:%d), fd:%d", ctrip.metaServerHost, ctrip.metaServerPort, fd);
+}
+
+int connectWithMetaServer(metaConnection *connection){
+
+	int   fd;
+
+    fd = anetTcpNonBlockBestEffortBindConnect(NULL,
+        ctrip.metaServerHost, ctrip.metaServerPort,REDIS_BIND_ADDR);
+    if (fd == -1) {
+        redisLog(REDIS_WARNING,"Unable to connect to server(%s:%d): %s", ctrip.metaServerHost, ctrip.metaServerPort, strerror(errno));
+        return REDIS_ERR;
+    }
+
+    if (aeCreateFileEvent(server.el,fd,AE_READABLE|AE_WRITABLE,metaServerConnect, connection) ==
+            AE_ERR)
+    {
+        close(fd);
+        redisLog(REDIS_WARNING,"Can't create readable event for meta");
+        return REDIS_ERR;
+    }
+
+
+    connection->metaServerFd = fd;
+    connection->metaServerState = META_SERVER_STATE_CONNECTING;
+
+    return REDIS_OK;
+}
+
+
+void getCtripMetaInfo(){
+
+	int i=0;
+
+	for(i = 0; i < META_SERVER_CONNECTION_COUNT ; i++){
+
+		if(ctrip.connection[i].metaServerState == META_SERVER_STATE_NONE){
+			if(connectWithMetaServer(&ctrip.connection[i]) != REDIS_OK){
+				continue;
+			}
+		}
+		if(ctrip.connection[i].metaServerState == META_SERVER_STATE_CONNECTED){
+			sendGetRequest(&ctrip.connection[i]);
+		}
+	}
+}
+
+
+void sendGetRequest(metaConnection *connection){
+
+
+
+}
+
+
+void processRedisMasterResponse(struct aeEventLoop *eventLoop, int fd, void *clientData, int mask){
+
+}
+
+void processKeeperMasterResponse(struct aeEventLoop *eventLoop, int fd, void *clientData, int mask){
+
+}
 

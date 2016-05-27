@@ -24,6 +24,7 @@ Ctrip branch for redis
    the address for x-pipe meta server
    1. cluster-name 
    1. shard-name 
+ 
 <a name="commands"></a>
 # commands
 <a name="fsync"></a>
