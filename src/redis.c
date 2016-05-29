@@ -1268,7 +1268,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
         migrateCloseTimedoutSockets();
     }
     run_with_period(1000) {
-    	getCtripMetaInfo();
+    	cronGetCtripMetaInfo();
     }
 
     server.cronloops++;
