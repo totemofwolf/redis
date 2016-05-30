@@ -17,6 +17,8 @@ void handleKeeperResponse(httpResponse *response);
 void handleMasterResponse(httpResponse *response);
 void processHttpInputBuff(metaConnection *connection);
 void handleResponse(metaConnection *connection);
+int isLocal(char *host);
+void getLocalAddresses();
 
 void clearLastMaster(){
 
@@ -45,8 +47,9 @@ void initMetaResponse(metaConnection *connection){
 
 }
 
-
 void initCtripConfig(){
+
+	getLocalAddresses();
 
 	ctrip.clusterName = CLUSTER_NAME_DEFAULT;
 	ctrip.metaServerUrl = NULL;
@@ -65,6 +68,10 @@ void initCtripConfig(){
 	ctrip.connection[1].defaultUrlFormat = URL_FORMAT_GET_DEFAULT_REDIS_MASTER;
 	ctrip.connection[1].responseHandler = handleMasterResponse;
 
+	ctrip.keeper.host = NULL;
+	ctrip.keeper.port = -1;
+	ctrip.master.host = NULL;
+	ctrip.master.port = -1;
 	clearLastMaster();
 }
 
@@ -116,6 +123,143 @@ void doFakeSync(redisClient *c){
 
     refreshGoodSlavesCount();
 }
+
+int getHostPort(sds buff, sds *host, int *dstPort){
+
+	int   port;
+	char *colon;
+
+	colon = strchr(buff, ':');
+	if(colon == NULL){
+		return REDIS_ERR;
+	}
+
+	port = atoi(colon + 1);
+	if(port <= 0){
+		return REDIS_ERR;
+	}
+
+	*dstPort = port;
+	*host = sdsnewlen(buff, colon - buff);
+
+	return REDIS_OK;
+}
+
+void connectToKeeper(){
+
+	if(!ctrip.keeper.host){
+		return;
+	}
+
+	if(server.masterhost
+			&& !strcasecmp(server.masterhost, ctrip.keeper.host) && server.masterport == ctrip.keeper.port){
+		redisLog(REDIS_NOTICE, "keeper not changed!");
+		return;
+	}
+
+	if(!server.masterhost){
+
+		redisLog(REDIS_NOTICE, "connect to new master %s:%d", ctrip.keeper.host, ctrip.keeper.port);
+		changeAndLogMaster(ctrip.keeper.host, ctrip.keeper.port);
+	}else{
+		redisLog(REDIS_NOTICE, "change redis master %s:%d  -> %s:%d",
+				server.masterhost, server.masterport, ctrip.keeper.host, ctrip.keeper.port);
+		sdsfree(server.masterhost);
+		server.masterhost = sdsnew(ctrip.keeper.host);
+		server.masterport = ctrip.keeper.port;
+		if(server.master){
+			freeClient(server.master);
+		}
+
+	}
+}
+
+int currentRole(){
+
+	if(ctrip.master.host == NULL){
+		return CTRIP_CURRENT_ROLE_UNKNOWN;
+	}
+
+	if(isLocal(ctrip.master.host) && server.port == ctrip.master.port){
+		return CTRIP_CURRENT_ROLE_MASTER;
+	}
+
+	return CTRIP_CURRENT_ROLE_SLAVE;
+}
+
+void keeperAddressChanged(){
+
+	if(currentRole() == CTRIP_CURRENT_ROLE_SLAVE){
+		connectToKeeper();
+	}
+
+}
+
+void masterAddressChanged(){
+
+	if(currentRole() == CTRIP_CURRENT_ROLE_SLAVE){
+		connectToKeeper();
+	}
+}
+
+void handleKeeperResponse(httpResponse *response){
+
+	sds host;
+	int port;
+
+	if(getHostPort(response->httpBody, &host, &port) == REDIS_ERR){
+		redisLog(REDIS_WARNING, "wrong response:%s", response->httpBody);
+		return;
+	}
+
+	if(ctrip.keeper.host == NULL){
+		redisLog(REDIS_NOTICE, "find new keeper:%s:%d",host, port);
+		ctrip.keeper.host = sdsdup(host);
+		ctrip.keeper.port = port;
+		keeperAddressChanged();
+	}else if(strcasecmp(ctrip.keeper.host, host) || ctrip.keeper.port != port){
+		redisLog(REDIS_NOTICE, "keeper changed :%s:%d  -> %s:%d",ctrip.keeper.host, ctrip.keeper.port, host, port);
+
+		sdsfree(ctrip.keeper.host);
+		ctrip.keeper.host = sdsdup(host);
+		ctrip.keeper.port = port;
+
+		keeperAddressChanged();
+	}
+
+	sdsfree(host);
+}
+
+void handleMasterResponse(httpResponse *response){
+
+	sds host;
+	int port;
+
+	if(getHostPort(response->httpBody, &host, &port) == REDIS_ERR){
+		redisLog(REDIS_WARNING, "wrong response:%s", response->httpBody);
+		return;
+	}
+
+	if(ctrip.master.host == NULL){
+
+		redisLog(REDIS_NOTICE, "find new master:%s:%d", host, port);
+		ctrip.master.host = sdsdup(host);
+		ctrip.master.port = port;
+		masterAddressChanged();
+	}else if(strcasecmp(ctrip.master.host, host) || ctrip.master.port != port){
+		redisLog(REDIS_NOTICE, "master changed :%s:%d  -> %s:%d",ctrip.master.host, ctrip.master.port, host, port);
+
+		sdsfree(ctrip.master.host);
+
+		ctrip.master.host = sdsdup(host);
+		ctrip.master.port = port;
+
+		masterAddressChanged();
+	}
+
+	sdsfree(host);
+}
+
 
 int getLenUntilPath(sds hostPortPath){
 
@@ -738,10 +882,65 @@ void processHttpInputBuff(metaConnection *connection){
 	}
 }
 
-void handleKeeperResponse(httpResponse *response){
-	redisLog(REDIS_WARNING, "handle keeper response");
-}
-void handleMasterResponse(httpResponse *response){
+int isLocal(char *host){
+	int i = 0;
 
-	redisLog(REDIS_WARNING, "handle master response");
+	if(host == NULL){
+		return 0;
+	}
+
+	for(i = 0; i < ctrip.localAddressCount; i++){
+		if(!strcasecmp(host, ctrip.localAddresses[i])){
+			return 1;
+		}
+	}
+
+	return 0;
 }
+
+void getLocalAddresses(){
+
+	int    slots = 5, addressSize = 0;
+	sds    *addresses;
+
+	struct ifaddrs *ifAddrStruct=NULL;
+	void * tmpAddrPtr=NULL;
+
+	addresses = zmalloc(slots * sizeof(sds));
+	getifaddrs(&ifAddrStruct);
+
+	while (ifAddrStruct!=NULL) {
+
+		if (ifAddrStruct->ifa_addr->sa_family==AF_INET) { // check it is IP4
+	            // is a valid IP4 Address
+	            tmpAddrPtr=&((struct sockaddr_in *)ifAddrStruct->ifa_addr)->sin_addr;
+	            char addressBuffer[INET_ADDRSTRLEN];
+	            inet_ntop(AF_INET, tmpAddrPtr, addressBuffer, INET_ADDRSTRLEN);
+
+	            addresses[addressSize] = sdsnewlen(addressBuffer, strlen(addressBuffer));
+	            addressSize++;
+		} else if (ifAddrStruct->ifa_addr->sa_family==AF_INET6) { // check it is IP6
+	            // is a valid IP6 Address
+	            tmpAddrPtr=&((struct sockaddr_in *)ifAddrStruct->ifa_addr)->sin_addr;
+	            char addressBuffer[INET6_ADDRSTRLEN];
+	            inet_ntop(AF_INET6, tmpAddrPtr, addressBuffer, INET6_ADDRSTRLEN);
+	            addresses[addressSize] = sdsnewlen(addressBuffer, strlen(addressBuffer));
+	            addressSize++;
+		}
+
+		ifAddrStruct=ifAddrStruct->ifa_next;
+		if(addressSize == slots){
+			slots *= 2;
+			addresses = zrealloc(addresses,  slots *sizeof(sds));
+		}
+	}
+
+	ctrip.localAddressCount = addressSize;
+	ctrip.localAddresses = addresses;
+
+
+	for(int i=0;i<ctrip.localAddressCount;i++){
+		redisLog(REDIS_NOTICE, "localAddress:%s", ctrip.localAddresses[i]);
+	}
+}
+

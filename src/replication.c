@@ -1715,6 +1715,18 @@ void replicationHandleMasterDisconnection(void) {
      * maybe we'll be able to PSYNC with our master later. We'll disconnect
      * the slaves only if we'll have to do a full resync with our master. */
 }
+void changeAndLogMaster(char *ip, int port){
+
+    if(server.masterhost){
+    	saveLastMaster();
+    }else{
+    	clearLastMaster();
+    }
+
+    /* There was no previous master or the user specified a different one,
+     * we can continue. */
+    replicationSetMaster(ip, port);
+}
 
 void slaveofCommand(redisClient *c) {
     /* SLAVEOF is not allowed in cluster mode as replication is automatically
@@ -1750,15 +1762,7 @@ void slaveofCommand(redisClient *c) {
             return;
         }
 
-        if(server.masterhost){
-        	saveLastMaster();
-        }else{
-        	clearLastMaster();
-        }
-
-        /* There was no previous master or the user specified a different one,
-         * we can continue. */
-        replicationSetMaster(c->argv[1]->ptr, port);
+        changeAndLogMaster(c->argv[1]->ptr, port);
         sds client = catClientInfoString(sdsempty(),c);
         redisLog(REDIS_NOTICE,"SLAVE OF %s:%d enabled (user request from '%s')",
             server.masterhost, server.masterport, client);

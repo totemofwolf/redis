@@ -8,9 +8,16 @@
 #ifndef CTRIP_H_
 #define CTRIP_H_
 
+#include <ifaddrs.h>
+#include <arpa/inet.h>
+
 #define HTTP_CRLF  "\r\n"
 
 #define REDIS_FAKESLAVE (1<<31)
+
+#define CTRIP_CURRENT_ROLE_UNKNOWN -1
+#define CTRIP_CURRENT_ROLE_MASTER 0
+#define CTRIP_CURRENT_ROLE_SLAVE  1
 
 #define CONFIG_NAME_META_SERVER_URL "meta-server-url"
 #define CONFIG_NAME_CLUSTER_NAME	"cluster-name"
@@ -21,10 +28,10 @@
 #define META_SERVER_CONNECTION_COUNT   		2
 #define META_SERVER_TIME_OUT 60
 
-#define URL_FORMAT_GET_KEEPER_MASTER		"/api/v1/%s/%s/keeper/master"
-#define URL_FORMAT_GET_DEFAULT_KEEPER_MASTER		"/api/v1/%s/keeper/master"
-#define URL_FORMAT_GET_REDIS_MASTER			"/api/v1/%s/%s/redis/master"
-#define URL_FORMAT_GET_DEFAULT_REDIS_MASTER			"/api/v1/%s/redis/master"
+#define URL_FORMAT_GET_KEEPER_MASTER			"/api/v1/%s/%s/keeper/master?format=plain"
+#define URL_FORMAT_GET_DEFAULT_KEEPER_MASTER	"/api/v1/%s/keeper/master?format=plain"
+#define URL_FORMAT_GET_REDIS_MASTER				"/api/v1/%s/%s/redis/master?format=plain"
+#define URL_FORMAT_GET_DEFAULT_REDIS_MASTER		"/api/v1/%s/redis/master?format=plain"
 
 #define META_SERVER_STATE_NONE   		0
 #define META_SERVER_STATE_CONNECTING   	1
@@ -46,6 +53,10 @@
 #define HTTP_STATE_CHUNKED_READING_BODY	1
 #define HTTP_STATE_CHUNKED_READING_CRLF	2
 
+typedef struct inetAddress{
+	sds host;
+	int port;
+}inetAddress;
 
 
 typedef struct httpStatus{
@@ -109,6 +120,15 @@ typedef struct ctrip{
 	int   metaServerPort;
 
 	metaConnection connection[META_SERVER_CONNECTION_COUNT];
+
+	//localaddress
+	sds *localAddresses;
+	int localAddressCount;
+
+	//keeperAddress
+	inetAddress keeper;
+	//masterAddress
+	inetAddress master;
 }ctripServer;
 
 typedef struct lastMaster{

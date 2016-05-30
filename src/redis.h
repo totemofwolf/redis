@@ -1171,6 +1171,7 @@ ssize_t syncRead(int fd, char *ptr, ssize_t size, long long timeout);
 ssize_t syncReadLine(int fd, char *ptr, ssize_t size, long long timeout);
 
 /* Replication */
+void changeAndLogMaster(char *ip, int port);
 void replicationFeedSlaves(list *slaves, int dictid, robj **argv, int argc);
 void replicationFeedMonitors(redisClient *c, list *monitors, int dictid, robj **argv, int argc);
 void updateSlavesWaitingBgsave(int bgsaveerr, int type);
