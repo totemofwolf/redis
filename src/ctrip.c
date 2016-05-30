@@ -16,6 +16,7 @@ void processMetaResponse(struct aeEventLoop *eventLoop, int fd, void *clientData
 void handleKeeperResponse(httpResponse *response);
 void handleMasterResponse(httpResponse *response);
 void processHttpInputBuff(metaConnection *connection);
+void handleResponse(metaConnection *connection);
 
 void clearLastMaster(){
 
@@ -29,6 +30,8 @@ void initConnection(metaConnection *connection){
 	connection->connectionState = META_SERVER_STATE_NONE;
 	connection->metaServerFd = -1;
 	connection->receiveBuff = sdsempty();
+	connection->sendBuff = NULL;
+	connection->httpResponse.httpBody = sdsempty();
 	connection->processor = processMetaResponse;
 	memset(connection->connectionDesc, 0, CONNECTION_DESC_LENGTH);
 }
@@ -37,9 +40,7 @@ void initMetaResponse(metaConnection *connection){
 
 	connection->httpResponse.httpResponseState = HTTP_STATE_READ_STATUS;
 	connection->httpResponse.currentLen = 0;
-	connection->httpResponse.httpBody = sdsempty();
 	connection->httpResponse.httpBodyType = HTTP_BODY_TYPE_UNKNOWN;
-
 	connection->httpResponse.chunkedState = HTTP_STATE_CHUNKED_READING_LEN;
 
 }
@@ -57,7 +58,6 @@ void initCtripConfig(){
 	initConnection(&ctrip.connection[0]);
 	ctrip.connection[0].urlFormat = URL_FORMAT_GET_KEEPER_MASTER;
 	ctrip.connection[0].defaultUrlFormat = URL_FORMAT_GET_DEFAULT_KEEPER_MASTER;
-
 	ctrip.connection[0].responseHandler = handleKeeperResponse;
 
 	initConnection(&ctrip.connection[1]);
@@ -241,13 +241,17 @@ void setConnectionState(metaConnection *connection, int state){
 	connection->connectionState = state;
 	connection->lastIoTime = server.unixtime;
 
-	if(state == META_SERVER_STATE_NONE){
-		initConnection(connection);
-	}
+}
+
+void freeMemory(metaConnection *connection){
+
+	sdsclear(connection->receiveBuff);
+	sdsclear(connection->httpResponse.httpBody);
 }
 
 void closeConnection(metaConnection *connection){
 
+	freeMemory(connection);
 
 	if(connection->metaServerFd == -1){
 		redisLog(REDIS_WARNING, "already closed %s", connection->connectionDesc);
@@ -320,7 +324,6 @@ int connectWithMetaServer(metaConnection *connection){
 
     connection->metaServerFd = fd;
     setConnectionState(connection, META_SERVER_STATE_CONNECTING);
-    connection->lastIoTime = server.unixtime;
 
 
     return REDIS_OK;
@@ -335,6 +338,9 @@ void cronGetCtripMetaInfo(){
 	for(i = 0; i < META_SERVER_CONNECTION_COUNT ; i++){
 
 		connection = &ctrip.connection[i];
+
+	    redisLog(REDIS_VERBOSE, "receiveBuff:%lu", sdslen(connection->receiveBuff) + sdsavail(connection->receiveBuff));
+	    redisLog(REDIS_VERBOSE, "body:%lu", sdslen(connection->httpResponse.httpBody) + sdsavail(connection->httpResponse.httpBody));
 
 		if(connection->connectionState == META_SERVER_STATE_NONE){
 			if(connectWithMetaServer(connection) != REDIS_OK){
@@ -389,8 +395,6 @@ void writeRequest(struct aeEventLoop *eventLoop, int fd, void *clientData, int m
     sendBuffLen = sdslen(connection->sendBuff);
     if(connection->sentlen >= sendBuffLen){
 
-    	sdsfree(connection->sendBuff);
-    	connection->sendBuff = NULL;
     	setConnectionState(connection, META_SERVER_STATE_READING_RESPONSE);
         aeDeleteFileEvent(eventLoop, fd,AE_WRITABLE);
 
@@ -418,6 +422,11 @@ void sendGetRequest(metaConnection *connection){
 	buff = sdscat(buff, "Accept: */*"HTTP_CRLF);
 	buff = sdscat(buff, HTTP_CRLF);
 
+	if(connection->sendBuff != NULL){
+		sdsfree(connection->sendBuff);
+		connection->sendBuff = NULL;
+	}
+
 	connection->sendBuff = buff;
 	connection->sentlen = 0;
 
@@ -434,7 +443,8 @@ void processMetaResponse(struct aeEventLoop *eventLoop, int fd, void *clientData
 	int readlen = REDIS_IOBUF_LEN, nread, qblen;
 	metaConnection *connection = clientData;
 
-    REDIS_NOTUSED(eventLoop);
+
+	REDIS_NOTUSED(eventLoop);
     REDIS_NOTUSED(mask);
 
 	qblen = sdslen(connection->receiveBuff);
@@ -459,7 +469,6 @@ void processMetaResponse(struct aeEventLoop *eventLoop, int fd, void *clientData
 
     if (nread) {
         sdsIncrLen(connection->receiveBuff, nread);
-        connection->lastIoTime = server.unixtime;
         processHttpInputBuff(connection);
     }
 }
@@ -494,22 +503,22 @@ void ctripLogSE(int level, char *start, char *end, char *info, metaConnection *c
 
 void readStatus(metaConnection *connection){
 
-	sds buff = connection->receiveBuff, status;
+	sds receiveBuff = connection->receiveBuff;
 	httpResponse *httpResponse = &connection->httpResponse;
 
 	char *line;
-	int   argc, i, index, statusCode, statusLength;
+	int   argc, i, index, statusCode;
 	sds   *argv;
 
 
-	line = strchr(buff, '\n');
+	line = strchr(receiveBuff, '\n');
 	if(line == NULL){
 		return;
 	}
 
-	ctripLogSE(REDIS_VERBOSE, buff, line - 2, "status", connection);
+	ctripLogSE(REDIS_VERBOSE, receiveBuff, line - 2, "status", connection);
 
-	argv = sdssplitlen(buff, line - buff -1 ," ", 1, &argc);
+	argv = sdssplitlen(receiveBuff, line - receiveBuff -1 ," ", 1, &argc);
 
 	index = 0;
 	for(i=0; i < argc ; i++){
@@ -530,20 +539,17 @@ void readStatus(metaConnection *connection){
 		index++;
 	}
 
-	for(i=0; i < argc ; i++){
-		sdsfree(argv[i]);
-	}
+	sdsfreesplitres(argv, argc);
 
-	sdsrange(buff, line - buff + 1, -1);
+	sdsrange(receiveBuff, line - receiveBuff + 1, -1);
 	connection->httpResponse.httpResponseState = HTTP_STATE_READ_HEADER;
 }
 
 void readHeader(metaConnection *connection){
 
-	char *line, count;
-	sds   *sps;
-	char   *start = connection->receiveBuff;
-	int   i, contentLength;
+	char  *line;
+	char  *start = connection->receiveBuff;
+	int   contentLength;
 	char  *colon;
 
 
@@ -603,7 +609,25 @@ void readHeader(metaConnection *connection){
 
 void readLenBody(metaConnection *connection){
 
-	redisLog(REDIS_NOTICE, "body:%s", connection->receiveBuff);
+	sds buff = connection->receiveBuff;
+	httpResponse *response = &connection->httpResponse;
+	int readlen = 0, finished = 0;
+
+	redisLog(REDIS_VERBOSE, "body:%s", connection->receiveBuff);
+
+	readlen = sdslen(buff);
+	if(readlen >= (response->contentLength - response->currentLen)){
+		readlen = response->contentLength - response->currentLen;
+		finished = 1;
+	}
+
+	response->currentLen += readlen;
+	response->httpBody = sdscatlen(response->httpBody, buff, readlen);
+	sdsrange(buff, readlen, -1);
+
+	if(finished){
+		handleResponse(connection);
+	}
 }
 
 void handleResponse(metaConnection *connection){
@@ -611,8 +635,7 @@ void handleResponse(metaConnection *connection){
 	ctripLog(REDIS_VERBOSE, connection, "begin handleResponse(%s)", connection->httpResponse.httpBody);
 	connection->responseHandler(&connection->httpResponse);
 
-	sdsclear(connection->receiveBuff);
-	sdsfree(connection->httpResponse.httpBody);
+	freeMemory(connection);
 	//request again
 	connection->connectionState = META_SERVER_STATE_CONNECTED;
 }
@@ -722,4 +745,3 @@ void handleMasterResponse(httpResponse *response){
 
 	redisLog(REDIS_WARNING, "handle master response");
 }
-
