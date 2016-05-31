@@ -29,9 +29,7 @@
 #define META_SERVER_TIME_OUT 60
 
 #define URL_FORMAT_GET_KEEPER_MASTER			"/api/v1/%s/%s/keeper/master?format=plain"
-#define URL_FORMAT_GET_DEFAULT_KEEPER_MASTER	"/api/v1/%s/keeper/master?format=plain"
 #define URL_FORMAT_GET_REDIS_MASTER				"/api/v1/%s/%s/redis/master?format=plain"
-#define URL_FORMAT_GET_DEFAULT_REDIS_MASTER		"/api/v1/%s/redis/master?format=plain"
 
 #define META_SERVER_STATE_NONE   		0
 #define META_SERVER_STATE_CONNECTING   	1
@@ -41,6 +39,9 @@
 #define CONNECTION_DESC_LENGTH  (REDIS_PEER_ID_LEN * 2 + 10)
 
 //for http
+#define HTTP_MAX_HOST_LENGTH  100
+#define HTTP_MAX_PORT_LENGTH  5
+
 #define HTTP_STATE_READ_STATUS  0
 #define HTTP_STATE_READ_HEADER  1
 #define HTTP_STATE_READ_BODY  2
@@ -89,7 +90,7 @@ typedef void (*responseHandler)(httpResponse *httpResponse);
 
 typedef struct metaConnection{
 
-	char *urlFormat, *defaultUrlFormat;
+	char *urlFormat;
 	char connectionDesc[CONNECTION_DESC_LENGTH];
 
 	int  connectionState;

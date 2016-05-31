@@ -60,12 +60,10 @@ void initCtripConfig(){
 
 	initConnection(&ctrip.connection[0]);
 	ctrip.connection[0].urlFormat = URL_FORMAT_GET_KEEPER_MASTER;
-	ctrip.connection[0].defaultUrlFormat = URL_FORMAT_GET_DEFAULT_KEEPER_MASTER;
 	ctrip.connection[0].responseHandler = handleKeeperResponse;
 
 	initConnection(&ctrip.connection[1]);
 	ctrip.connection[1].urlFormat = URL_FORMAT_GET_REDIS_MASTER;
-	ctrip.connection[1].defaultUrlFormat = URL_FORMAT_GET_DEFAULT_REDIS_MASTER;
 	ctrip.connection[1].responseHandler = handleMasterResponse;
 
 	ctrip.keeper.host = NULL;
@@ -131,6 +129,10 @@ int getHostPort(sds buff, sds *host, int *dstPort){
 
 	colon = strchr(buff, ':');
 	if(colon == NULL){
+		return REDIS_ERR;
+	}
+
+	if((colon - buff) > HTTP_MAX_HOST_LENGTH || strlen(colon + 1) > HTTP_MAX_PORT_LENGTH){
 		return REDIS_ERR;
 	}
 
@@ -208,7 +210,7 @@ void handleKeeperResponse(httpResponse *response){
 	int port;
 
 	if(getHostPort(response->httpBody, &host, &port) == REDIS_ERR){
-		redisLog(REDIS_WARNING, "wrong response:%s", response->httpBody);
+		redisLog(REDIS_WARNING, "wrong keeper meta response:%s", response->httpBody);
 		return;
 	}
 
@@ -236,7 +238,7 @@ void handleMasterResponse(httpResponse *response){
 	int port;
 
 	if(getHostPort(response->httpBody, &host, &port) == REDIS_ERR){
-		redisLog(REDIS_WARNING, "wrong response:%s", response->httpBody);
+		redisLog(REDIS_WARNING, "wrong master meta response:%s", response->httpBody);
 		return;
 	}
 
@@ -555,11 +557,7 @@ void writeRequest(struct aeEventLoop *eventLoop, int fd, void *clientData, int m
 void sendGetRequest(metaConnection *connection){
 
 	sds buff = sdsnew("GET ");
-	if(strcasecmp(ctrip.clusterName, CLUSTER_NAME_DEFAULT)){
-		buff = sdscatprintf(buff, connection->urlFormat, ctrip.clusterName, ctrip.shardName);
-	}else{
-		buff = sdscatprintf(buff, connection->defaultUrlFormat, ctrip.shardName);
-	}
+	buff = sdscatprintf(buff, connection->urlFormat, ctrip.clusterName, ctrip.shardName);
 	buff = sdscat(buff, " HTTP/1.1"HTTP_CRLF);
 	buff = sdscatprintf(buff, "Host:%s:%d"HTTP_CRLF, ctrip.metaServerHost, ctrip.metaServerPort);
 	buff = sdscat(buff, "User-Agent: redis"HTTP_CRLF);
