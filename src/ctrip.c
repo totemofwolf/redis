@@ -774,8 +774,13 @@ void readLenBody(metaConnection *connection){
 
 void handleResponse(metaConnection *connection){
 
-	ctripLog(REDIS_VERBOSE, connection, "begin handleResponse(%s)", connection->httpResponse.httpBody);
-	connection->responseHandler(&connection->httpResponse);
+	if(connection->httpResponse.httpStatus.statusCode == HTTP_STATUS_CODE_200){
+
+		ctripLog(REDIS_VERBOSE, connection, "begin handleResponse(%s)", connection->httpResponse.httpBody);
+		connection->responseHandler(&connection->httpResponse);
+	}else{
+		ctripLog(REDIS_WARNING, connection, "statusCode:%d", connection->httpResponse.httpStatus.statusCode);
+	}
 
 	freeMemory(connection);
 	//request again
