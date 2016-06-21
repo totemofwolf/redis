@@ -137,7 +137,7 @@ int getHostPort(sds buff, sds *host, int *dstPort){
 	}
 
 	port = atoi(colon + 1);
-	if(port <= 0){
+	if(port < 0){
 		return REDIS_ERR;
 	}
 
