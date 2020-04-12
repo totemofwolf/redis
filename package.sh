@@ -1,8 +1,8 @@
 APP=xredis
-Version=1.0.2
+Version=1.0.3
 Package=$APP-$Version
 
-find . -name ctrip.h -exec sed -i "s/XREDIS_VERSION \"\(.*\)\"/XREDIS_VERSION \"$Version\"/" {} \;
+# find . -name ctrip.h -exec sed -i "s/XREDIS_VERSION \"\(.*\)\"/XREDIS_VERSION \"$Version\"/" {} \;
 
 if [ -f $package ]; then
     echo remove $Package
