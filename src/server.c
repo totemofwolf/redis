@@ -1322,6 +1322,7 @@ void createSharedObjects(void) {
     shared.rpop = createStringObject("RPOP",4);
     shared.lpop = createStringObject("LPOP",4);
     shared.lpush = createStringObject("LPUSH",5);
+    shared.rpoplpush = createStringObject("RPOPLPUSH",9);
     for (j = 0; j < OBJ_SHARED_INTEGERS; j++) {
         shared.integers[j] =
             makeObjectShared(createObject(OBJ_STRING,(void*)(long)j));
@@ -1768,6 +1769,10 @@ int listenToPort(int port, int *fds, int *count) {
                 "Creating Server TCP listening socket %s:%d: %s",
                 server.bindaddr[j] ? server.bindaddr[j] : "*",
                 port, server.neterr);
+                if (errno == ENOPROTOOPT     || errno == EPROTONOSUPPORT ||
+                    errno == ESOCKTNOSUPPORT || errno == EPFNOSUPPORT ||
+                    errno == EAFNOSUPPORT    || errno == EADDRNOTAVAIL)
+                    continue;
             return C_ERR;
         }
         anetNonBlock(NULL,fds[*count]);

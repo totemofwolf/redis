@@ -1589,6 +1589,7 @@ int slaveTryPartialResynchronization(int fd, int read_reply) {
             "error state (reply: %s)", reply);
     }
     sdsfree(reply);
+    replicationDiscardCachedMaster();
     return PSYNC_NOT_SUPPORTED;
 }
 
@@ -2033,6 +2034,15 @@ void slaveofCommand(client *c) {
         }
     } else {
         long port;
+
+        if (c->flags & CLIENT_SLAVE)
+        {
+            /* If a client is already a replica they cannot run this command,
+             * because it involves flushing all replicas (including this
+             * client) */
+            addReplyError(c, "Command is not valid when client is a replica.");
+            return;
+        }
 
         if ((getLongFromObjectOrReply(c, c->argv[2], &port, NULL) != C_OK))
             return;

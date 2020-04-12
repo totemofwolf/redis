@@ -520,7 +520,7 @@ void lremCommand(client *c) {
 
     if (removed) {
         signalModifiedKey(c->db,c->argv[1]);
-        notifyKeyspaceEvent(NOTIFY_GENERIC,"lrem",c->argv[1],c->db->id);
+        notifyKeyspaceEvent(NOTIFY_LIST,"lrem",c->argv[1],c->db->id);
     }
 
     if (listTypeLength(subject) == 0) {
@@ -596,6 +596,9 @@ void rpoplpushCommand(client *c) {
         signalModifiedKey(c->db,touchedkey);
         decrRefCount(touchedkey);
         server.dirty++;
+        if (c->cmd->proc == brpoplpushCommand) {
+            rewriteClientCommandVector(c,3,shared.rpoplpush,c->argv[1],c->argv[2]);
+        }
     }
 }
 
